@@ -24,6 +24,13 @@
 
 ![GUI](./gui.png)
 
+## 🖥️ 系统要求
+- **操作系统**: Windows 10/11 (32位/64位)
+- **.NET 框架**: .NET Framework 4.7.2 或更高版本
+
+> [!CAUTION]
+> **系统兼容性说明**: 本软件不支持Windows 7及更早版本。因为核心组件subs-check使用Go语言编译，而Go 1.19及以后版本已正式放弃对Windows 7的支持。
+
 ## 💾 测速结果 保存方法
 
 - **本地**：将结果保存到本地,默认保存到可执行文件目录下的 output 文件夹
@@ -31,16 +38,25 @@
 - **gist**：将结果保存到 github gist [配置方法](https://github.com/beck-8/subs-check/blob/master/doc/gist.md)
 - **webdav**：将结果保存到 webdav 服务器 [配置方法](https://github.com/beck-8/subs-check/blob/master/doc/webdav.md)
 
+## 📦 关于 Github Proxy
+- **Github Proxy**：本项目使用了 `Github Proxy` 来加速 GUI 必要内容的加载。
+> [!Tip]
+> 你也可以通过 https://github.com/cmliu/CF-Workers-GitHub 项目来搭建自己专属的 **Github Proxy**。
+
 ## 📁 GUI 文件结构
 ```shell
 subs-check.win.gui.exe      # GUI本体
 subs-check.exe              # subs-check x86_32位 内核本体  
 subs-check_Windows_i386.zip # subs-check x86_32位 内核压缩包  
+Upgrade.exe                 # 升级程序
+Upgrade.ini                 # 升级配置文件
 config
  └─ config.yaml             # subs-check 配置文件  
 output
+ ├─ ACL4SSR_Online_Full.yaml # ACL4SSR_Online_Full.yaml 覆写配置文件
  ├─ all.yaml                # yaml格式 测试结果
  ├─ base64.txt              # base64格式 测试结果
+ ├─ bdg.yaml                # 布丁狗的订阅转换.yaml 覆写配置文件
  ├─ mihomo.yaml             # clash订阅文件 带分流规则
  ├─ node.exe                # sub-store 服务
  ├─ root.json               # sub-store 配置文件

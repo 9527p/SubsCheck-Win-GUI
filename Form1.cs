@@ -12,20 +12,25 @@ using System.Net.NetworkInformation;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using YamlDotNet.Core;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement.ProgressBar;
 
 namespace subs_check.win.gui
 {
     public partial class Form1: Form
     {
-        string 版本号;
+        //string 版本号;
         string 标题;
         private Process subsCheckProcess = null;
         string nodeInfo;//进度
         private Icon originalNotifyIcon; // 保存原始图标
         private ToolStripMenuItem startMenuItem;
         private ToolStripMenuItem stopMenuItem;
-        string githubProxyURL;
+        string githubProxyURL = "";
         int run = 0;
+        string 当前subsCheck版本号 = "未知版本";
+        string 当前GUI版本号 = "未知版本";
+        string 最新GUI版本号 = "未知版本";
         public Form1()
         {
             InitializeComponent();
@@ -36,10 +41,11 @@ namespace subs_check.win.gui
             toolTip1.SetToolTip(numericUpDown3, "超时时间(毫秒)：节点的最大延迟。");
             toolTip1.SetToolTip(numericUpDown4, "最低测速结果舍弃(KB/s)。");
             toolTip1.SetToolTip(numericUpDown5, "下载测试时间(s)：与下载链接大小相关，默认最大测试10s。");
-            toolTip1.SetToolTip(numericUpDown6, "本地监听端口：用于直接返回测速结果的节点信息，方便订阅转换。\n注意：除非你知道你在干什么，否则不要将你的本地订阅端口暴露到公网，否则可能会被滥用");
+            toolTip1.SetToolTip(numericUpDown6, "本地监听端口：用于直接返回测速结果的节点信息，方便 Sub-Store 实现订阅转换。");
             toolTip1.SetToolTip(numericUpDown7, "Sub-Store监听端口：用于订阅订阅转换。\n注意：除非你知道你在干什么，否则不要将你的 Sub-Store 暴露到公网，否则可能会被滥用");
             toolTip1.SetToolTip(textBox1, "节点池订阅地址：支持 Link、Base64、Clash 格式的订阅链接。");
             toolTip1.SetToolTip(checkBox1, "以节点IP查询位置重命名节点。\n质量差的节点可能造成IP查询失败，造成整体检查速度稍微变慢。");
+            toolTip1.SetToolTip(checkBox2, "是否开启流媒体检测，其中IP欺诈依赖'节点地址查询'，内核版本需要 v2.0.8 以上\n\n示例：美国1 | ⬇️ 5.6MB/s |0%|Netflix|Disney|Openai\n风控值：0% (使用ping0.cc标准)\n流媒体解锁：Netflix、Disney、Openai");
             toolTip1.SetToolTip(comboBox3, "GitHub 代理：代理订阅 GitHub raw 节点池。");
             toolTip1.SetToolTip(comboBox2, "测速地址：注意 并发数*节点速度<最大网速 否则测速结果不准确\n尽量不要使用Speedtest，Cloudflare提供的下载链接，因为很多节点屏蔽测速网站。");
             toolTip1.SetToolTip(textBox7, "将测速结果推送到Worker的地址。");
@@ -50,6 +56,9 @@ namespace subs_check.win.gui
             
             toolTip1.SetToolTip(comboBox4, "通用订阅：内置了Sub-Store程序，自适应订阅格式。\nClash订阅：带规则的 Mihomo、Clash 订阅格式。");
             toolTip1.SetToolTip(comboBox5, "生成带规则的 Clash 订阅所需的覆写规则文件");
+
+            toolTip1.SetToolTip(checkBox3, "保存几个成功的节点，不选代表不限制，内核版本需要 v2.1.0 以上\n如果你的并发数量超过这个参数，那么成功的结果可能会大于这个数值");
+            toolTip1.SetToolTip(numericUpDown8, "保存几个成功的节点，不选代表不限制，内核版本需要 v2.1.0 以上\n如果你的并发数量超过这个参数，那么成功的结果可能会大于这个数值");
             // 设置通知图标的上下文菜单
             SetupNotifyIconContextMenu();
         }
@@ -158,8 +167,9 @@ namespace subs_check.win.gui
             }
 
             FileVersionInfo myFileVersionInfo = FileVersionInfo.GetVersionInfo(System.Reflection.Assembly.GetExecutingAssembly().Location);
-            版本号 = "v" + myFileVersionInfo.FileVersion;
-            标题 = "SubsCheck Win GUI " + 版本号;
+            当前GUI版本号 = "v" + myFileVersionInfo.FileVersion;
+            最新GUI版本号 = 当前GUI版本号;
+            标题 = "SubsCheck Win GUI " + 当前GUI版本号;
             this.Text = 标题 + " TG:CMLiussss BY:CM喂饭 干货满满";
             comboBox1.Text = "本地";
             comboBox4.Text = "通用订阅";
@@ -202,9 +212,10 @@ namespace subs_check.win.gui
                             JObject json = JObject.Parse(responseBody);
                             string latestVersion = json["tag_name"].ToString();
 
-                            if (latestVersion != 版本号)
+                            if (latestVersion != 当前GUI版本号)
                             {
-                                标题 = "SubsCheck Win GUI " + 版本号 + $"  发现新版本: {latestVersion} 请及时更新！";
+                                最新GUI版本号 = latestVersion;
+                                标题 = "SubsCheck Win GUI " + 当前GUI版本号 + $"  发现新版本: {最新GUI版本号} 请及时更新！";
                                 this.Text = 标题;
                             }
                         }
@@ -236,7 +247,7 @@ namespace subs_check.win.gui
             }
         }
 
-        private void ReadConfig()//读取配置文件
+        private async void ReadConfig()//读取配置文件
         {
             try
             {
@@ -281,12 +292,39 @@ namespace subs_check.win.gui
                     string listenport = 读取config字符串(config, "listen-port");
                     if (listenport != null)
                     {
-                        listenport = listenport.Replace(":", "");
-                        numericUpDown6.Value = decimal.Parse(listenport);
+                        // 查找最后一个冒号的位置
+                        int colonIndex = listenport.LastIndexOf(':');
+                        if (colonIndex >= 0 && colonIndex < listenport.Length - 1)
+                        {
+                            // 提取冒号后面的部分作为端口号
+                            string portStr = listenport.Substring(colonIndex + 1);
+                            if (decimal.TryParse(portStr, out decimal port))
+                            {
+                                numericUpDown6.Value = port;
+                            }
+                        }
                     }
 
+                    /*
                     int? substoreport = 读取config整数(config, "sub-store-port");
                     if (substoreport.HasValue) numericUpDown7.Value = substoreport.Value;
+                    */
+
+                    string substoreport = 读取config字符串(config, "sub-store-port");
+                    if (substoreport != null)
+                    {
+                        // 查找最后一个冒号的位置
+                        int colonIndex = substoreport.LastIndexOf(':');
+                        if (colonIndex >= 0 && colonIndex < substoreport.Length - 1)
+                        {
+                            // 提取冒号后面的部分作为端口号
+                            string portStr = substoreport.Substring(colonIndex + 1);
+                            if (decimal.TryParse(portStr, out decimal port))
+                            {
+                                numericUpDown7.Value = port;
+                            }
+                        }
+                    }
 
                     string githubproxy = 读取config字符串(config, "githubproxy");
                     if (githubproxy != null) comboBox3.Text = githubproxy;
@@ -297,7 +335,20 @@ namespace subs_check.win.gui
                     int mihomoOverwriteUrlIndex = mihomoOverwriteUrl.IndexOf(githubRawPrefix);
                     if (mihomoOverwriteUrl != null) 
                     {
-                        if (mihomoOverwriteUrlIndex > 0) comboBox5.Text = mihomoOverwriteUrl.Substring(mihomoOverwriteUrlIndex);
+                        if (mihomoOverwriteUrl.Contains("http://127.0.0")) 
+                        {
+                            if (mihomoOverwriteUrl.EndsWith("bdg.yaml", StringComparison.OrdinalIgnoreCase))
+                            {
+                                comboBox5.Text = "[内置]布丁狗的订阅转换";
+                                await ProcessComboBox5Selection();
+                            }
+                            else if (mihomoOverwriteUrl.EndsWith("ACL4SSR_Online_Full.yaml", StringComparison.OrdinalIgnoreCase)) 
+                            {
+                                comboBox5.Text = "[内置]ACL4SSR_Online_Full";
+                                await ProcessComboBox5Selection();
+                            }
+                        } 
+                        else if (mihomoOverwriteUrlIndex > 0) comboBox5.Text = mihomoOverwriteUrl.Substring(mihomoOverwriteUrlIndex);
                         else comboBox5.Text = mihomoOverwriteUrl;
                     } 
 
@@ -337,6 +388,10 @@ namespace subs_check.win.gui
                     if (renamenode != null && renamenode == "true") checkBox1.Checked = true;
                     else checkBox1.Checked = false;
 
+                    string mediacheck = 读取config字符串(config, "media-check");
+                    if (mediacheck != null && mediacheck == "true") checkBox2.Checked = true;
+                    else checkBox2.Checked = false;
+
                     string githubgistid = 读取config字符串(config, "github-gist-id");
                     if (githubgistid != null) textBox2.Text = githubgistid;
                     string githubtoken = 读取config字符串(config, "github-token");
@@ -356,6 +411,25 @@ namespace subs_check.win.gui
                     if (webdavpassword != null) textBox8.Text = webdavpassword;
                     string webdavurl = 读取config字符串(config, "webdav-url");
                     if (webdavurl != null) textBox5.Text = webdavurl;
+
+                    string subscheckversion = 读取config字符串(config, "subscheck-version");
+                    if (subscheckversion != null) 当前subsCheck版本号 = subscheckversion;
+
+                    int? successlimit = 读取config整数(config, "success-limit");
+                    if (successlimit.HasValue) 
+                    {
+                        if (successlimit.Value == 0)
+                        {
+                            checkBox3.Checked = false;
+                            numericUpDown8.Enabled = false;
+                        }
+                        else
+                        {
+                            checkBox3.Checked = true;
+                            numericUpDown8.Enabled = true;
+                            numericUpDown8.Value = successlimit.Value;
+                        }   
+                    }
                 }
             }
             catch (Exception ex)
@@ -401,7 +475,7 @@ namespace subs_check.win.gui
             return null;
         }
 
-        private async Task SaveConfig()//保存配置文件
+        private async Task SaveConfig(bool githubProxyCheck = true)//保存配置文件
         {
             try
             {
@@ -439,68 +513,122 @@ namespace subs_check.win.gui
                 config["webdav-url"] = textBox5.Text;
 
                 // 保存listen-port
-                config["listen-port"] = $@":{numericUpDown6.Value}";
+                config["listen-port"] = $@"127.0.0.1:{numericUpDown6.Value}";
                 // 保存sub-store-port
-                config["sub-store-port"] = numericUpDown7.Value;
+                config["sub-store-port"] = $@"0.0.0.0:{numericUpDown7.Value}";
 
                 // 保存githubproxy
-                if (!string.IsNullOrEmpty(comboBox3.Text)) config["githubproxy"] = comboBox3.Text;
+                config["githubproxy"] = comboBox3.Text;
 
-                // 保存sub-urls列表，将textBox1的文本按行分割为列表
-                if (!string.IsNullOrEmpty(textBox1.Text))
+                string githubRawPrefix = "https://raw.githubusercontent.com/";
+                if (githubProxyCheck)
                 {
-                    var subUrls = textBox1.Text.Split(new[] { Environment.NewLine }, StringSplitOptions.RemoveEmptyEntries).ToList();
-
                     // 检查并处理 GitHub Raw URLs
-                    if (!string.IsNullOrEmpty(comboBox3.Text))
+                    if (comboBox3.Text == "自动选择")
                     {
-                        const string githubRawPrefix = "https://raw.githubusercontent.com/";
-
-                        if (comboBox3.Text == "自动选择")
+                        // 创建不包含"自动选择"的代理列表
+                        List<string> proxyItems = new List<string>();
+                        for (int j = 0; j < comboBox3.Items.Count; j++)
                         {
-                            // 创建不包含"自动选择"的代理列表
-                            List<string> proxyItems = new List<string>();
-                            for (int j = 0; j < comboBox3.Items.Count; j++)
-                            {
-                                string proxyItem = comboBox3.Items[j].ToString();
-                                if (proxyItem != "自动选择")
-                                    proxyItems.Add(proxyItem);
-                            }
-
-                            // 随机打乱列表顺序
-                            Random random = new Random();
-                            proxyItems = proxyItems.OrderBy(x => random.Next()).ToList();
-
-                            // 异步检测可用代理
-                            githubProxyURL = await DetectGitHubProxyAsync(proxyItems);
-                        }
-                        else
-                        {
-                            githubProxyURL = $"https://{comboBox3.Text}/";
+                            string proxyItem = comboBox3.Items[j].ToString();
+                            if (proxyItem != "自动选择")
+                                proxyItems.Add(proxyItem);
                         }
 
-                        // 处理URLs
-                        for (int i = 0; i < subUrls.Count; i++)
-                        {
-                            if (subUrls[i].StartsWith(githubRawPrefix) && !string.IsNullOrEmpty(githubProxyURL))
-                            {
-                                // 替换为代理 URL 格式
-                                subUrls[i] = githubProxyURL + githubRawPrefix + subUrls[i].Substring(githubRawPrefix.Length);
-                            }
-                        }
+                        // 随机打乱列表顺序
+                        Random random = new Random();
+                        proxyItems = proxyItems.OrderBy(x => random.Next()).ToList();
+
+                        // 异步检测可用代理
+                        githubProxyURL = await DetectGitHubProxyAsync(proxyItems);
                     }
-                    string allyamlFilePath = System.IO.Path.Combine(executablePath, "output", "all.yaml");
-                    if (System.IO.File.Exists(allyamlFilePath)) subUrls.Add($"http://127.0.0.1:{numericUpDown6.Value}/all.yaml");
+                }
+                else if(comboBox3.Text == "自动选择") githubProxyURL = "";
 
-                    if (subUrls.Count > 0) config["sub-urls"] = subUrls;
+                if (comboBox3.Text != "自动选择") githubProxyURL = $"https://{comboBox3.Text}/";
+
+                // 保存sub-urls列表
+                List<string> subUrls = new List<string>();
+                string allyamlFilePath = System.IO.Path.Combine(executablePath, "output", "all.yaml");
+                if (System.IO.File.Exists(allyamlFilePath))
+                {
+                    subUrls.Add($"http://127.0.0.1:{numericUpDown6.Value}/all.yaml");
+                    Log("已加载上次测试结果。");
                 }
 
-                config["mihomo-overwrite-url"] = githubProxyURL + comboBox5.Text;//Clash订阅 覆写配置文件
+                if (!string.IsNullOrEmpty(textBox1.Text))
+                {
+                    subUrls.AddRange(textBox1.Text.Split(new[] { Environment.NewLine }, StringSplitOptions.RemoveEmptyEntries).ToList());
+                    // 处理URLs
+                    for (int i = 0; i < subUrls.Count; i++)
+                    {
+                        if (subUrls[i].StartsWith(githubRawPrefix) && !string.IsNullOrEmpty(githubProxyURL))
+                        {
+                            // 替换为代理 URL 格式
+                            subUrls[i] = githubProxyURL + githubRawPrefix + subUrls[i].Substring(githubRawPrefix.Length);
+                        }
+                    }
+                }
+
+                config["sub-urls"] = subUrls;
+
+                // 处理配置文件下载与配置
+                if (comboBox5.Text.Contains("[内置]"))
+                {
+                    // 确定文件名和下载URL
+                    string fileName;
+                    string downloadFilePath;
+                    string downloadUrl;
+                    string displayName;
+
+                    if (comboBox5.Text.Contains("[内置]布丁狗"))
+                    {
+                        fileName = "bdg.yaml";
+                        displayName = "[内置]布丁狗的订阅转换";
+                        downloadUrl = "https://raw.githubusercontent.com/mihomo-party-org/override-hub/main/yaml/%E5%B8%83%E4%B8%81%E7%8B%97%E7%9A%84%E8%AE%A2%E9%98%85%E8%BD%AC%E6%8D%A2.yaml";
+                    }
+                    else // [内置]ACL4SSR
+                    {
+                        fileName = "ACL4SSR_Online_Full.yaml";
+                        displayName = "[内置]ACL4SSR_Online_Full";
+                        downloadUrl = "https://raw.githubusercontent.com/mihomo-party-org/override-hub/main/yaml/ACL4SSR_Online_Full.yaml";
+                    }
+
+                    // 确保output文件夹存在
+                    string outputFolderPath = Path.Combine(executablePath, "output");
+                    if (!Directory.Exists(outputFolderPath))
+                    {
+                        Directory.CreateDirectory(outputFolderPath);
+                    }
+
+                    // 确定文件完整路径
+                    downloadFilePath = Path.Combine(outputFolderPath, fileName);
+
+                    // 检查文件是否存在
+                    if (!File.Exists(downloadFilePath))
+                    {
+                        Log($"{displayName} 覆写配置文件 未找到，将使用在线版本。");
+                        config["mihomo-overwrite-url"] = githubProxyURL + downloadUrl;
+                    }
+                    else
+                    {
+                        Log($"{displayName} 覆写配置文件 加载成功。");
+                        config["mihomo-overwrite-url"] = $"http://127.0.0.1:{numericUpDown6.Value}/{fileName}";
+                    }
+                }
+                else if (comboBox5.Text.StartsWith(githubRawPrefix)) config["mihomo-overwrite-url"] = githubProxyURL + comboBox5.Text;
+                else config["mihomo-overwrite-url"] = comboBox5.Text;
 
                 config["rename-node"] = checkBox1.Checked;//以节点IP查询位置重命名节点
+                config["media-check"] = checkBox2.Checked;//是否开启流媒体检测
                 config["keep-success-proxies"] = false;
                 config["print-progress"] = true;//是否显示进度
                 config["sub-urls-retry"] = 3;//重试次数(获取订阅失败后重试次数)
+                config["subscheck-version"] = 当前subsCheck版本号;//当前subsCheck版本号
+
+                //保存几个成功的节点，为0代表不限制 
+                if (checkBox3.Checked) config["success-limit"] = (int)numericUpDown8.Value;
+                else config["success-limit"] = 0;
 
                 // 使用YamlDotNet序列化配置
                 var serializer = new YamlDotNet.Serialization.SerializerBuilder()
@@ -530,23 +658,11 @@ namespace subs_check.win.gui
             {
                 button2.Text = "高级设置∨";
                 groupBox3.Visible = false;
-                numericUpDown5.Visible = false;
-                numericUpDown6.Visible = false;
-                numericUpDown7.Visible = false;
-                label4.Visible = false;
-                label5.Visible = false;
-                label20.Visible = false;
             }
             else
             {
                 button2.Text = "高级设置∧";
                 groupBox3.Visible = true;
-                numericUpDown5.Visible = true;
-                numericUpDown6.Visible = true;
-                numericUpDown7.Visible = true;
-                label4.Visible = true;
-                label5.Visible = true;
-                label20.Visible = true;
             }
             判断保存类型();
         }
@@ -577,7 +693,7 @@ namespace subs_check.win.gui
                 groupBox5.Enabled = false;
                 groupBox6.Enabled = false;
                 button1.Text = "停止";
-
+                timer3.Enabled = true;
                 // 清空 richTextBox1
                 richTextBox1.Clear();
                 await KillNodeProcessAsync();
@@ -624,7 +740,7 @@ namespace subs_check.win.gui
                 groupBox5.Enabled = true;
                 groupBox6.Enabled = true;
                 button1.Text = "启动";
-
+                timer3.Enabled = false;
                 // 更新菜单项的启用状态
                 startMenuItem.Enabled = true;
                 stopMenuItem.Enabled = false;
@@ -648,7 +764,15 @@ namespace subs_check.win.gui
                     return;
                 }
 
-                using (HttpClient client = new HttpClient())
+                // 创建不使用系统代理的 HttpClientHandler
+                HttpClientHandler handler = new HttpClientHandler
+                {
+                    UseProxy = false,
+                    Proxy = null
+                };
+
+                // 使用自定义 handler 创建 HttpClient
+                using (HttpClient client = new HttpClient(handler))
                 {
                     try
                     {
@@ -743,8 +867,10 @@ namespace subs_check.win.gui
 
                                         // 解压文件
                                         exeEntry.ExtractToFile(exeFilePath);
+                                        当前subsCheck版本号 = latestVersion;
+                                        Log($"subs-check.exe {当前subsCheck版本号} 已就绪！");
 
-                                        Log("subs-check.exe 已就绪！");
+                                        await SaveConfig(false);
                                         // 这里保留原有行为，不修改button1.Enabled
 
                                         // 删除下载的zip文件
@@ -784,6 +910,7 @@ namespace subs_check.win.gui
 
             button1.Enabled = true;
         }
+
 
         private async void StartSubsCheckProcess()
         {
@@ -870,7 +997,7 @@ namespace subs_check.win.gui
                 subsCheckProcess.EnableRaisingEvents = true;
                 subsCheckProcess.Exited += SubsCheckProcess_Exited;
 
-                Log("subs-check.exe 已启动...");
+                Log($"subs-check.exe {当前subsCheck版本号} 已启动...");
             }
             catch (Exception ex)
             {
@@ -1046,12 +1173,149 @@ namespace subs_check.win.gui
             }));
         }
 
-        private void button3_Click(object sender, EventArgs e)
+        /// <summary>
+        /// 获取本地局域网IP地址，如果有多个则让用户选择
+        /// </summary>
+        /// <returns>用户选择的IP地址，如果未选择则返回127.0.0.1</returns>
+        private string GetLocalLANIP()
         {
             try
             {
+                // 获取所有网卡的IP地址
+                List<string> lanIPs = new List<string>();
+
+                // 获取所有网络接口
+                foreach (System.Net.NetworkInformation.NetworkInterface ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    // 排除loopback、虚拟网卡和非活动网卡
+                    if (ni.NetworkInterfaceType != System.Net.NetworkInformation.NetworkInterfaceType.Loopback &&
+                        ni.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up)
+                    {
+                        // 获取该网卡的所有IP地址
+                        foreach (System.Net.NetworkInformation.UnicastIPAddressInformation ip in ni.GetIPProperties().UnicastAddresses)
+                        {
+                            // 只添加IPv4地址且不是回环地址
+                            if (ip.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+                                !System.Net.IPAddress.IsLoopback(ip.Address))
+                            {
+                                lanIPs.Add(ip.Address.ToString());
+                            }
+                        }
+                    }
+                }
+
+                // 如果没有找到任何IP地址，返回本地回环地址
+                if (lanIPs.Count == 0)
+                {
+                    return "127.0.0.1";
+                }
+                // 如果只找到一个IP地址，直接返回
+                else if (lanIPs.Count == 1)
+                {
+                    return lanIPs[0];
+                }
+                // 如果有多个IP地址，让用户选择
+                else
+                {
+                    // 创建选择窗口
+                    Form selectForm = new Form();
+                    selectForm.Text = "选择局域网IP地址";
+                    selectForm.StartPosition = FormStartPosition.CenterParent;
+                    /*
+                    selectForm.Width = 520;  // 保持宽度
+                    selectForm.Height = 320; // 增加高度以容纳额外的警告标签
+                    selectForm.FormBorderStyle = FormBorderStyle.FixedDialog;
+                    */
+                    selectForm.AutoSize = true;  // 启用自动大小调整
+                    selectForm.AutoSizeMode = AutoSizeMode.GrowAndShrink;  // 根据内容调整大小
+                    selectForm.FormBorderStyle = FormBorderStyle.FixedSingle;  // 使用固定但可调整的边框
+                    selectForm.ShowIcon = false;
+                    selectForm.MaximizeBox = false;
+                    selectForm.MinimizeBox = false;
+
+                    // 添加说明标签
+                    Label label = new Label();
+                    label.Text = "发现多个局域网IP地址：\n\n" +
+                                 "· 仅在本机订阅：直接点击【取消】，将使用127.0.0.1\n\n" +
+                                 "· 局域网内其他设备订阅：请在下面列表中选择一个正确的局域网IP";
+                    label.Location = new Point(15, 10);
+                    label.AutoSize = true;
+                    label.MaximumSize = new Size(380, 0); // 设置最大宽度，允许自动换行
+                    selectForm.Controls.Add(label);
+
+                    // 计算标签高度以正确放置列表框
+                    int labelHeight = label.Height + 20;
+
+                    // 添加IP地址列表框
+                    ListBox listBox = new ListBox();
+                    listBox.Location = new Point(15, labelHeight);
+                    listBox.Width = 380;
+                    listBox.Height = 130; // 保持列表框高度
+                    foreach (string ip in lanIPs)
+                    {
+                        listBox.Items.Add(ip);
+                    }
+                    listBox.SelectedIndex = 0; // 默认选择第一个IP
+                    selectForm.Controls.Add(listBox);
+
+                    // 添加警告标签（放在列表框下方）
+                    Label warningLabel = new Label();
+                    warningLabel.Text = "注意：选择错误的IP会导致局域网内其他设备无法正常订阅";
+                    warningLabel.Location = new Point(15, labelHeight + listBox.Height + 10);
+                    warningLabel.AutoSize = true;
+                    warningLabel.ForeColor = Color.Red; // 警告文本使用红色
+                    selectForm.Controls.Add(warningLabel);
+
+                    // 计算按钮位置（居中排布）
+                    int buttonY = labelHeight + listBox.Height + warningLabel.Height + 20;
+                    int buttonTotalWidth = 75 * 2 + 15; // 两个按钮的宽度加间距
+                    int buttonStartX = (selectForm.ClientSize.Width - buttonTotalWidth) / 2;
+
+                    // 添加确定按钮
+                    Button okButton = new Button();
+                    okButton.Text = "确定";
+                    okButton.DialogResult = DialogResult.OK;
+                    okButton.Location = new Point(buttonStartX, buttonY);
+                    okButton.Width = 75;
+                    selectForm.Controls.Add(okButton);
+                    selectForm.AcceptButton = okButton;
+
+                    // 添加取消按钮
+                    Button cancelButton = new Button();
+                    cancelButton.Text = "取消";
+                    cancelButton.DialogResult = DialogResult.Cancel;
+                    cancelButton.Location = new Point(buttonStartX + 90, buttonY);
+                    cancelButton.Width = 75;
+                    selectForm.Controls.Add(cancelButton);
+                    selectForm.CancelButton = cancelButton;
+
+                    // 显示选择窗口
+                    if (selectForm.ShowDialog() == DialogResult.OK)
+                    {
+                        return listBox.SelectedItem.ToString();
+                    }
+                    else
+                    {
+                        return "127.0.0.1"; // 如果用户取消，返回本地回环地址
+                    }
+                }
+
+
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"获取局域网IP地址时出错: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return "127.0.0.1";
+            }
+        }
+
+        private void button3_Click(object sender, EventArgs e)
+        {
+            string 本地IP = GetLocalLANIP();
+            try
+            {
                 // 构造URL
-                string url = comboBox4.Text == "Clash" ? $"http://127.0.0.1:{numericUpDown7.Value}/api/file/mihomo" : $"http://127.0.0.1:{numericUpDown7.Value}/download/sub";
+                string url = comboBox4.Text == "Clash" ? $"http://{本地IP}:{numericUpDown7.Value}/api/file/mihomo" : $"http://{本地IP}:{numericUpDown7.Value}/download/sub";
 
                 // 将URL复制到剪贴板
                 Clipboard.SetText(url);
@@ -1075,8 +1339,11 @@ namespace subs_check.win.gui
         private void comboBox3_Leave(object sender, EventArgs e)
         {
             // 检查是否有内容
-            if (string.IsNullOrWhiteSpace(comboBox3.Text))
+            if (string.IsNullOrWhiteSpace(comboBox3.Text)) 
+            {
+                comboBox3.Text = "自动选择";
                 return;
+            }
 
             string input = comboBox3.Text.Trim();
 
@@ -1514,7 +1781,7 @@ namespace subs_check.win.gui
             }
         }
 
-        private void textBox1_DoubleClick(object sender, EventArgs e)
+        private async void textBox1_DoubleClick(object sender, EventArgs e)
         {
             if (textBox1.Enabled)
             {
@@ -1547,9 +1814,165 @@ namespace subs_check.win.gui
 
                     // 将处理后的内容更新到Form1的textBox1
                     textBox1.Text = string.Join(Environment.NewLine, lines);
+                    await SaveConfig(false);
+                    Log("已保存订阅地址列表。");
                 }
             }
 
+        }
+
+        private void checkBox1_CheckedChanged(object sender, EventArgs e)
+        {
+            if (checkBox1.Checked == false) checkBox2.Checked = false;
+        }
+
+        private void checkBox2_CheckedChanged(object sender, EventArgs e)
+        {
+            if (checkBox2.Checked == true) checkBox1.Checked = true;
+        }
+
+        private async void timer3_Tick(object sender, EventArgs e)
+        {
+            if (button1.Text == "停止") 
+            {
+                Log("subs-check.exe 运行时满24小时，自动重启清理内存占用。");
+                // 停止 subs-check.exe 程序
+                StopSubsCheckProcess();
+                // 结束 Sub-Store
+                await KillNodeProcessAsync();
+                // 重新启动 subs-check.exe 程序
+                StartSubsCheckProcess();
+                numericUpDown1.Enabled = false;
+                numericUpDown2.Enabled = false;
+                numericUpDown3.Enabled = false;
+                numericUpDown4.Enabled = false;
+                numericUpDown5.Enabled = false;
+                numericUpDown6.Enabled = false;
+                numericUpDown7.Enabled = false;
+                comboBox1.Enabled = false;
+                textBox1.Enabled = false;
+                groupBox3.Enabled = false;
+                groupBox4.Enabled = false;
+                groupBox5.Enabled = false;
+                groupBox6.Enabled = false;
+                button1.Text = "停止";
+            }
+        }
+
+        private void button4_Click(object sender, EventArgs e)
+        {
+            // 创建 CheckUpdates 窗口实例
+            CheckUpdates checkUpdatesForm = new CheckUpdates();
+
+            // 传递必要的数据和状态
+            checkUpdatesForm.githubProxys = comboBox3.Items;
+            checkUpdatesForm.githubProxy = comboBox3.Text;
+
+            checkUpdatesForm.当前subsCheck版本号 = 当前subsCheck版本号;
+            checkUpdatesForm.当前GUI版本号 = 当前GUI版本号;
+            checkUpdatesForm.最新GUI版本号 = 最新GUI版本号;
+
+            // 为 CheckUpdates 的 button2 添加点击事件处理程序
+            checkUpdatesForm.FormClosed += (s, args) => {
+                // 移除事件处理，避免内存泄漏
+                if (checkUpdatesForm.DialogResult == DialogResult.OK)
+                {
+                    // 如果返回OK结果，表示按钮被点击并需要更新内核
+                    button5_Click(this, EventArgs.Empty);
+                }
+            };
+
+            // 设置 button2 点击后关闭窗口并返回 DialogResult.OK
+            // 这需要在 CheckUpdates.cs 中修改 button2_Click 方法
+
+            // 显示 CheckUpdates 窗口
+            checkUpdatesForm.ShowDialog();
+        }
+
+        private void checkBox3_CheckedChanged(object sender, EventArgs e)
+        {
+            if (checkBox3.Checked) numericUpDown8.Enabled = true;
+            else numericUpDown8.Enabled = false;
+        }
+
+        private async void comboBox5_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            await ProcessComboBox5Selection();
+        }
+
+        private async Task ProcessComboBox5Selection()
+        {
+            if (comboBox5.Text.Contains("[内置]"))
+            {
+                // 确定文件名和下载URL
+                string fileName;
+                string downloadFilePath;
+                string downloadUrl;
+                string displayName;
+                string executablePath = Path.GetDirectoryName(System.Windows.Forms.Application.ExecutablePath);
+                if (comboBox5.Text.Contains("[内置]布丁狗"))
+                {
+                    fileName = "bdg.yaml";
+                    displayName = "[内置]布丁狗的订阅转换";
+                    downloadUrl = "https://raw.githubusercontent.com/mihomo-party-org/override-hub/main/yaml/%E5%B8%83%E4%B8%81%E7%8B%97%E7%9A%84%E8%AE%A2%E9%98%85%E8%BD%AC%E6%8D%A2.yaml";
+                }
+                else // [内置]ACL4SSR
+                {
+                    fileName = "ACL4SSR_Online_Full.yaml";
+                    displayName = "[内置]ACL4SSR_Online_Full";
+                    downloadUrl = "https://raw.githubusercontent.com/mihomo-party-org/override-hub/main/yaml/ACL4SSR_Online_Full.yaml";
+                }
+
+                // 确保output文件夹存在
+                string outputFolderPath = Path.Combine(executablePath, "output");
+                if (!Directory.Exists(outputFolderPath))
+                {
+                    Directory.CreateDirectory(outputFolderPath);
+                }
+
+                // 确定文件完整路径
+                downloadFilePath = Path.Combine(outputFolderPath, fileName);
+
+                // 检查文件是否存在
+                if (!File.Exists(downloadFilePath))
+                {
+                    Log($"{displayName} 覆写配置文件 未找到，正在下载...");
+
+                    // 添加GitHub代理前缀如果有
+                    string fullDownloadUrl = githubProxyURL + downloadUrl;
+
+                    try
+                    {
+                        // 创建不使用系统代理的HttpClientHandler
+                        using (HttpClientHandler handler = new HttpClientHandler { UseProxy = false, Proxy = null })
+                        using (HttpClient client = new HttpClient(handler))
+                        {
+                            client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win32; x86) AppleWebKit/537.36 (KHTML, like Gecko) cmliu/SubsCheck-Win-GUI");
+                            client.Timeout = TimeSpan.FromSeconds(15); // 设置15秒超时
+
+                            // 下载文件内容
+                            HttpResponseMessage response = await client.GetAsync(fullDownloadUrl);
+
+                            if (response.IsSuccessStatusCode)
+                            {
+                                // 获取响应内容并写入文件
+                                string fileContent = await response.Content.ReadAsStringAsync();
+                                File.WriteAllText(downloadFilePath, fileContent, Encoding.UTF8);
+
+                                Log($"{displayName} 覆写配置文件 下载成功");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"{displayName} 覆写配置文件 下载失败: {ex.Message}", true);
+                    }
+                }
+                else
+                {
+                    Log($"{displayName} 覆写配置文件 已就绪。");
+                }
+            }
         }
     }
 }
